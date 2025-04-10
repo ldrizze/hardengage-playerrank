@@ -75,9 +75,10 @@ fs.createReadStream('playerlist.csv')
                 playerName: player.name,
                 tagLine: player.tagline,
                 matchIds: playerMatches,
-                matches: []
+                matches: [],
+                lane: player.lane
             }
-            
+
             let progressBar = term.progressBar({
                 title: 'Fetching matches',
                 items: playerMatches.length,
@@ -106,7 +107,7 @@ fs.createReadStream('playerlist.csv')
                 }
                 progressBar.itemDone(matchId)
             }
-            term('\r\n\r\n')
+            term('\n\n')
         }
 
         if (options.save) {
