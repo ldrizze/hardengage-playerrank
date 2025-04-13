@@ -18,13 +18,11 @@ const { program } = require('commander');
 
 program
     .option('-c, --count <number>', 'Matches to fetch', 100)
-    .option('-r, --rank <rank>', 'Player rank', 'challenger')
     .option('-d, --delay <number>', 'Match fetch between delay (ms)', 1000)
     .option('-p, --pagination <number>', 'Maximum itens per page', 100)
     .option('-e, --retry <times>', 'Retry number of times', 3)
     .option('-w, --retry-wait-time <time>', 'Wait delay to retry (ms)', 30000)
     .option('--batch-id <id>', 'The batch file id', Date.now())
-    .option('--save', 'Save batch procress', true)
     .argument('<string>')
 
 program.parse()
