@@ -2,7 +2,16 @@ const axios = require('axios')
 const csv = require('csv-parser')
 const fs = require('fs')
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
-const term = require( 'terminal-kit' ).terminal;
+const term = require( 'terminal-kit' ).terminal
+const parquet = require('parquetjs')
+const schema = new parquet.ParquetSchema({
+    puuid: { type: 'UTF8' },
+    playerName: { type: 'UTF8' },
+    tagLine: { type: 'UTF8' },
+    matchIds: { type: 'UTF8', repeated: true },
+    matches: { type: 'JSON', repeated: true },
+    lane: { type: 'UTF8', optional: true }
+})
 
 // PROGRAM
 const { program } = require('commander');
@@ -21,6 +30,7 @@ program
 program.parse()
 const options = program.opts()
 const batchId = options.batchId
+const batchFileName = `batch-${batchId}.parquet`
 
 const riotApi = axios.create({
     baseURL: 'https://americas.api.riotgames.com',
@@ -36,6 +46,8 @@ fs.createReadStream('playerlist.csv')
     .pipe(csv())
     .on('data', data => players.push(data))
     .on('end', async () => {
+        term(`Creating parquet file\n`)
+        const parquetFile = await parquet.ParquetWriter.openFile(schema, `./batches/${batchFileName}`)
         term(`Iterating over ${players.length} players\n`)
 
         // Iterate players
@@ -43,10 +55,22 @@ fs.createReadStream('playerlist.csv')
             term(`Retrieving `)
             term.bold.underline(`${player.name}#${player.tagline}`)
             term('...')
-            const playerAccount = await riotApi.get(`/riot/account/v1/accounts/by-riot-id/${player.name}/${player.tagline}`)
+
+            let playerAccount
+            try {
+                playerAccount = await riotApi.get(`/riot/account/v1/accounts/by-riot-id/${player.name}/${player.tagline}`)
+                term(` account found! Retrieving matches...`)
+            } catch (error) {
+                if (error instanceof axios.AxiosError) {
+                    term(` error ${error.status}, skipping\n\n`)
+                } else {
+                    term(` account retrieve error, skipping.\n\n`)
+                    term(error.message)
+                }
+                continue
+            }
             await delay(+options.delay)
 
-            term(` account found! Retrieving matches... `)
             let playerMatches = []
             for (let start = 0; start < +options.count; start += +options.pagination) {
                 const tmpMatches = await riotApi.get(`/lol/match/v5/matches/by-puuid/${playerAccount.data.puuid}/ids`, {
@@ -65,26 +89,28 @@ fs.createReadStream('playerlist.csv')
             }
 
             if (playerMatches.length === 0) {
-                term('No match found, skipping...\n')
+                term(' no match found, skipping...\n')
                 continue
             } else {
-                term(`Found ${playerMatches.length} matches, starting.\n`)
+                term(` found ${playerMatches.length} matches, fetch starting...\n`)
             }
 
             matches[playerAccount.data.puuid] = {
+                puuid: playerAccount.data.puuid,
                 playerName: player.name,
                 tagLine: player.tagline,
                 matchIds: playerMatches,
                 matches: [],
-                lane: player.lane
+                lane: player.line
             }
 
             let progressBar = term.progressBar({
-                title: 'Fetching matches',
+                title: 'Fetching',
                 items: playerMatches.length,
                 eta: true,
                 percent: true,
-                width: 80
+                width: 80,
+                inline: true
             })
 
             for (const matchId of playerMatches) {
@@ -94,7 +120,7 @@ fs.createReadStream('playerlist.csv')
                     if (tries > +options.retry) break
                     try {
                         const playerMatch = await riotApi(`/lol/match/v5/matches/${matchId}`)
-                        matches[playerAccount.data.puuid].matches.push(playerMatch.data)
+                        matches[playerAccount.data.puuid].matches.push(JSON.stringify(playerMatch.data))
                         await delay(+options.delay)
                         break
                     } catch (error) {
@@ -107,13 +133,13 @@ fs.createReadStream('playerlist.csv')
                 }
                 progressBar.itemDone(matchId)
             }
+
+            await parquetFile.appendRow(matches[playerAccount.data.puuid])
             term('\n\n')
         }
 
-        if (options.save) {
-            const batchFileName = `batch-${batchId}.json`
-            fs.writeFileSync(`./batches/${batchFileName}`, JSON.stringify(matches))
-            term(`Saving batch ${batchFileName}\n`)
-        }
+        term('Writing parquet file...')
+        await parquetFile.close()
+        term.bold.green(' done!\n')
 
     });
